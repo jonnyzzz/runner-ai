@@ -1,110 +1,134 @@
-# Strava importer specification
+# Strava integration specification
 
-Planned implementation: `src/strava/`, with entry point `src/strava/sync.py`.
-This adapter is not implemented yet.
+Use either the custom Strava API importer or a Strava MCP server. These are
+independent approaches with separate authentication, configuration, and token
+storage. Both produce records meeting the
+[common data requirements](README.md#integration-specification).
 
-Use the [shared importer specification](README.md#importer-specification) for
-architecture, CLI options, history selection, incrementality, storage, failure
-recovery, and credential handling. Those requirements are implemented once in
-`src/runner_ai/`; this file defines the Strava-specific behavior.
+Local Python code is preferably run with uv. No common Python implementation
+with the Nike+ library or MCP server is required.
 
-## Planned command and setup
+## Custom importer: Strava API
 
-From the repository root:
+Planned implementation: `src/strava/sync.py`. From the repository root:
 
 ```sh
 uv run src/strava/sync.py
 ```
 
-Use the [common options](README.md#history-selection-and-common-options) to change
-the history window or force a refresh. `--full` refreshes the selected window;
-combine it with `--all-history` only when the entire accessible archive is wanted.
+This script is not implemented yet. It owns its API client and OAuth flow.
+
+### Setup and credentials
 
 Register an application at [Strava API Settings](https://www.strava.com/settings/api),
 following the [Getting Started guide](https://developers.strava.com/docs/getting-started/).
-Strava currently requires a subscription to create an API application. Set
-**Authorization Callback Domain** to `localhost`, without a scheme, path, or port.
-Supply `STRAVA_CLIENT_ID` and `STRAVA_CLIENT_SECRET` through the environment.
+Set **Authorization Callback Domain** to `localhost`, without a scheme, path, or
+port. `STRAVA_CLIENT_ID` and `STRAVA_CLIENT_SECRET` configure **this custom OAuth
+app path only**; supply them through the environment.
 
-App subscription requirements and OAuth permissions are separate: access to
-private activities requires the scope below. Do not describe a subscription as a
-replacement for permission, or assume that any future MCP server has identical
-account requirements.
+Subscription or API-access eligibility may depend on the selected integration
+and app tier. Strava's current guide lists a subscription as a prerequisite for
+creating a custom app. Check the current dashboard requirements rather than
+making a blanket claim that private runs always require a subscription. Private
+activity visibility also requires the appropriate OAuth scope below.
 
-## OAuth login
+Save access and refresh tokens, expiry, and athlete ID in
+**`data/strava-tokens.json`**. Apply the
+[credential exclusion and permission rules](README.md#credential-files-under-data)
+before writing it. Keep the client secret supplied through the environment out
+of this file.
 
-1. Start a loopback-only HTTP listener, requesting port `0` so the OS assigns an
-   available port. Ensure it is reachable as `localhost`; never bind to all
-   network interfaces. Use `http://localhost:<assigned-port>/callback` as the
-   redirect URI.
-2. Open `https://www.strava.com/oauth/authorize` in the default browser with the
-   client ID, redirect URI, `response_type=code`, an unpredictable `state`, and
-   **only `scope=activity:read_all`**. Print the authorization URL as a fallback
-   when browser launch is unavailable.
-3. Accept only the expected callback path with matching state. Handle denial,
-   missing or declined scopes, malformed callbacks, and a bounded timeout. Close
-   the listener after completion, cancellation, or timeout.
-4. Exchange the code at `POST https://www.strava.com/oauth/token`. Confirm the
-   required scope was granted. Cache the access token, refresh token, expiry,
-   and athlete ID under `data/.runner-ai/strava/`, subject to the
-   [shared credential rules](README.md#private-data-credentials-and-state).
-5. Reuse valid tokens without opening a browser. Refresh according to the stored
-   expiry, atomically retain the latest returned refresh token, and retry an
-   expired-token request at most once after refresh. Ask for authorization again
-   if refresh credentials are rejected; keep existing source data and sync state.
+### OAuth login
 
-`activity:read_all` includes private “Only You” runs; `activity:read` excludes
-them. Request no profile or write scopes. Strava offers no run-only permission,
-so apply the activity filter below. The flow, localhost redirect support, scopes,
-and refresh behavior follow [Strava's authentication documentation](https://developers.strava.com/docs/authentication/).
+1. Start a loopback-only HTTP listener on an OS-assigned free port by requesting
+   port `0`. Ensure it is reachable as `localhost`. Redirect to
+   `http://localhost:<assigned-port>/callback`.
+2. Open Strava's authorization page in the default browser with the client ID,
+   redirect URI, `response_type=code`, unpredictable `state`, and **only
+   `scope=activity:read_all`**. Print the authorization URL if browser launch
+   is unavailable.
+3. Validate the callback path and state, verify granted scope, and handle denial,
+   malformed callbacks, and a bounded timeout. Close the listener on completion,
+   cancellation, or timeout.
+4. Exchange the code at `POST https://www.strava.com/oauth/token`. Persist the
+   returned tokens and expiry in the selected credential file.
+5. Reuse valid tokens; refresh expired tokens and atomically save the latest
+   returned refresh token. Reauthorize if refresh credentials are rejected,
+   preserving run records and import progress.
 
-## Activity API and selection
+`activity:read_all` includes private “Only You” activities; `activity:read` omits
+them. Request no profile or write scopes. Strava has no run-only permission, so
+filter locally. Follow [Strava's authentication documentation](https://developers.strava.com/docs/authentication/).
 
-Use these authenticated read endpoints:
+### Activity fetching and persistence
 
-| Purpose | Endpoint |
-| --- | --- |
-| Paginated activity summaries | `GET /api/v3/athlete/activities` |
-| Selected activity details | `GET /api/v3/activities/{id}` |
+Use `GET /api/v3/athlete/activities` for paginated summaries and
+`GET /api/v3/activities/{id}` for selected run details. Accept only `sport_type`
+values **`Run`, `TrailRun`, and `VirtualRun`**, including manual and treadmill
+runs classified accordingly. Skip unrelated and unknown sports before detail
+requests or folder creation.
 
-Accept only `sport_type` values **`Run`, `TrailRun`, and `VirtualRun`**. Include
-manual or treadmill activities classified as runs. Exclude all other and unknown
-sports before detail requests or folder creation. Recheck the type on a detail
-response before saving it; do not persist unfiltered listing responses.
+Use `start_date` for UTC history selection and the calendar date in
+`start_date_local` for new folders. Keep source details in
+`data/run-YYYY-MM-DD-strava-<id>/strava.json`, preserving original fields.
 
-The [Strava API reference](https://developers.strava.com/docs/reference/) defines
-these endpoints and types. Use `start_date` for UTC window comparisons and the
-calendar date in `start_date_local` for a new folder. Do not reinterpret the local
-clock value as UTC. Source identity is the Strava activity ID, including when a
-date or title changes.
+The custom script should expose `--since YYYY-MM-DD`, `--all-history`, and
+`--full` for the [common history and refresh behavior](README.md#history-and-incremental-imports).
+Revisit summaries in the selected period to discover missing or backdated runs;
+reuse existing details and refresh recent corrections. A seven-day refresh
+overlap is a reasonable initial policy; `--full` refreshes older existing runs.
 
-## Pagination adapter
+Apply the API's `after` / `before` bounds and `page` / `per_page` pagination,
+including records exactly at the inclusive start boundary. Continue until the
+unfiltered response is empty, even through pages without runs. Follow the
+[API reference](https://developers.strava.com/docs/reference/#api-Activities-getLoggedInAthleteActivities)
+and [rate-limit headers](https://developers.strava.com/docs/rate-limits/).
 
-- Request `page` / `per_page` pages bounded by the selected history start and
-  fixed scan-start time. Adapt the API's strict `after` boundary so an activity
-  exactly at the inclusive `--since` timestamp is included, and filter locally.
-- Continue until the unfiltered API response is an empty activity page. A page
-  without runs is not the end of the list.
-- List the selected history on each invocation, not just the recent refresh
-  overlap. Let the [shared sync engine](README.md#incremental-fetching-and-recovery)
-  choose which details to download or refresh. Its checkpoint is not a cutoff
-  for discovering backdated uploads.
-- Respect the application's actual [rate-limit headers](https://developers.strava.com/docs/rate-limits/).
-  Do not hard-code an assumption that the full import will fit in one quota.
+## MCP integration
 
-The [activity-list parameters](https://developers.strava.com/docs/reference/#api-Activities-getLoggedInAthleteActivities)
-filter by when an activity occurred, rather than its upload or modification time.
-An older edit to an existing record is therefore covered by `--full`, not by an
-assumption that it will appear as a newly dated activity.
+Select a Strava MCP server independently of the custom importer. No server is
+selected yet; its documented capabilities and setup must be verified when chosen.
+Prefer a uv-launched Python server or local helper where supported, while using
+the selected server's own runtime and configuration.
 
-## Provider-specific verification and scope
+### Setup and credentials
 
-In addition to the shared contract suite, verify the random-port callback,
-localhost resolution, wrong state, unrelated paths, denial, missing permissions,
-timeout cleanup, token expiry and rotation, account changes, mixed-sport pages,
-all three run types, the inclusive date boundary, and source-local dates.
+- **The MCP server owns authentication and token lifecycle**, including consent,
+  expiry, refresh, and its credential format. Follow its security guidance.
+- The custom importer's `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, and
+  `data/strava-tokens.json` are not MCP configuration. A server may have its own
+  client credentials; use only its documented setup.
+- Configure the server's supported credential files under
+  **`data/strava-mcp/`**, separately from the custom OAuth file. Record its exact
+  native filenames and verify the
+  [data-repository exclusions and permissions](README.md#credential-files-under-data).
+  Select a local or self-hosted server supporting this location; Runner AI must
+  not parse or rewrite its token cache to imitate the custom importer.
+- Prefer read-only activity access. Confirm support and permission for private
+  “Only You” runs where needed. Do not infer private access or required scopes
+  from the custom importer's configuration.
+- Check subscription and app-access requirements for that particular server and
+  authorization method; they may differ from creating a personal API app.
 
-Separate stream downloads and uploads are outside the first milestone. A Strava
-MCP server may be considered as a later transport if it supplies the same source
-identity and coverage guarantees; no particular MCP server is selected or
-implemented by this specification.
+### Fetching and persistence
+
+Use the server's supported activity-list and detail tools, date filters,
+pagination, and incremental behavior. Export only runs within the selected
+history, following the [common data requirements](README.md#run-records-and-layout).
+If the tools cannot supply stable IDs, sufficient history, or run classification,
+report the limitation rather than claiming a complete import.
+
+Save retained MCP source responses in
+`data/run-YYYY-MM-DD-strava-<id>/strava-mcp.json`, with MCP server/tool provenance
+in `import.json`. Preserve any `strava.json` already in that activity folder.
+API and MCP records with the same Strava ID are representations of one run.
+Server-managed credentials stay out of those activity files.
+
+## Verification
+
+For the API path, check callback validation and cleanup, scope denial, token
+rotation, account changes, mixed-sport pages, date boundaries, and reruns. For
+MCP, check the chosen server's credential ownership and configured paths,
+permissions, tool pagination, private-activity coverage, and retained output.
+Verify common data outcomes independently for each approach; no shared Python
+code or token implementation is required.
