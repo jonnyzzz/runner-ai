@@ -10,9 +10,19 @@ own training that other runners can adapt.
 
 ## Current status
 
-The project is at the specification stage. The source tree, importers, and agent
-workflows below are planned, not implemented. Command examples describe the
-intended interface and are not runnable yet.
+The [Nike+ fetcher](nike.md) is implemented and uses the pinned `nrc-exporter`
+library. Strava API, MCP integration, and agent coaching remain specifications.
+
+With a separate Git checkout prepared under `data/`, start the Nike library's
+login flow and fetch runs:
+
+```sh
+uv run --locked src/nike/sync.py --login --timezone Europe/Berlin
+```
+
+Choose the timezone appropriate for your training history. See
+[Nike setup and usage](nike.md#first-fetch) for prerequisites, authentication,
+incremental imports, and limitations.
 
 ## Planned workflow
 
@@ -35,7 +45,7 @@ intended interface and are not runnable yet.
 | --- | --- | --- |
 | Strava API | Independent uv Python script in `src/strava/` | [Custom importer](strava.md#custom-importer-strava-api) |
 | Strava MCP | Selected MCP server's tools, configuration, and authentication | [MCP integration](strava.md#mcp-integration) |
-| Nike+ / Nike Run Club | Independent uv Python launcher in `src/nike/`, using the Nike+ library | [nike.md](nike.md) |
+| Nike+ / Nike Run Club | Implemented uv Python fetcher in `src/nike/`, using the Nike+ library | [nike.md](nike.md) |
 
 Keep each implementation independent. Prefer [uv Python scripts](https://docs.astral.sh/uv/guides/scripts/)
 for local code, with dependencies and a compatible Python version declared per
@@ -124,7 +134,8 @@ do not silently place its credentials elsewhere or invent its cache format.
 
 The parent repository's `/data/` ignore rule does not exclude files from commits
 inside the private data repository. Before credentials are stored, require these
-entries in **`data/.gitignore`**, committed as configuration in that repository:
+entries in **`data/.gitignore`**. Track the ignore rules as configuration in the
+private repository:
 
 ```gitignore
 /strava-tokens.json
@@ -154,14 +165,15 @@ reported missing metrics, duplicate handling, and credential exclusion and
 permissions. Add authentication and compatibility checks appropriate to the
 chosen API, MCP server, or library.
 
-The first milestone imports available source activity records. Additional stream
-requests, conversion/export, agent coaching, repository provisioning, and Git
-automation are later work. Declare and lock dependencies separately as needed
-and ignore generated Python environments and caches.
+The Nike implementation imports available source activity records. Additional
+stream requests, conversion/export, agent coaching, repository provisioning, and
+Git automation are later work. Declare and lock dependencies separately as
+needed and ignore generated Python environments and caches.
 
 ## Intended directory layout
 
-Source files below are planned. The data checkout has its own ignore rules.
+The Nike script and its dependency lock are implemented; Strava files are planned.
+The data checkout has its own ignore rules.
 
 ```text
 runner-ai/
@@ -172,9 +184,11 @@ runner-ai/
 ├── .gitignore
 ├── src/
 │   ├── strava/
-│   │   └── sync.py              # Independent custom Strava API uv script
+│   │   └── sync.py              # Planned custom Strava API uv script
 │   └── nike/
-│       └── sync.py              # Independent uv launcher for the Nike+ library
+│       ├── sync.py              # Implemented Nike+ fetcher
+│       └── sync.py.lock         # Pinned upstream library and dependencies
+├── tests/nike/                  # Offline fetcher and upstream integration tests
 ├── data/                        # Separate private repository; ignored here
 │   ├── .gitignore               # Explicit credential and state exclusions
 │   ├── GOALS.md

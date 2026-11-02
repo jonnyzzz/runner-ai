@@ -1,2 +1,5 @@
 /data/
 /slop/
+__pycache__/
+*.py[cod]
+.venv/
