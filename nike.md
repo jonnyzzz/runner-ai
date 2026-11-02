@@ -24,7 +24,7 @@ git -C data init
 Then run:
 
 ```sh
-uv run --locked src/nike/sync.py --login --timezone Europe/Berlin
+uv run --locked src/nike/sync.py --login --timezone Europe/Berlin --log
 ```
 
 Choose an IANA timezone appropriate for your history. The source timezone is used
@@ -34,7 +34,9 @@ Historical runs recorded while traveling may need a different timezone.
 The launcher invokes the library's manual login flow. Follow its terminal prompts
 to open Nike's website and supply the token as described in the
 [library's authentication instructions](https://github.com/yasoob/nrc-exporter#heavy_dollar_sign-extracting-access-tokens).
-The launcher saves the returned token in **`data/nike-tokens.json`** with the local
+Enter the token at the **hidden terminal prompt**; do not paste it into chat or a
+shell command. Login stops if the terminal cannot hide input. The launcher saves
+the returned token in **`data/nike-tokens.json`** with the local
 account label. It does not pass the token in process arguments or write it into
 run records. No Strava credentials are needed.
 
@@ -58,7 +60,7 @@ data/run-YYYY-MM-DD-nike-<activity-id>/
 
 ```sh
 # Reuse the saved token, start date, timezone, and downloaded details.
-uv run --locked src/nike/sync.py
+uv run --locked src/nike/sync.py --log
 
 # Renew through the library when the saved token is rejected or expires.
 uv run --locked src/nike/sync.py --login
@@ -89,6 +91,7 @@ preserves the existing folder when a run's source date changes.
 | `--data-dir PATH` | Use another separate data checkout. The default is this repository's `data/`, regardless of the shell's working directory. |
 | `--account LABEL` | Select a local account label; default `athlete`. A saved token with another label is rejected. |
 | `--login` | Run the library's login flow and replace the token in the selected file. |
+| `--log` | Also write a private, redacted log under `data/.sync-state/nike/logs/`. The filename is printed at startup. |
 | `--timeout SECONDS` | Bound each detail operation; default 60 seconds. Listing is bounded by at least 300 seconds. |
 
 Examples:
@@ -100,6 +103,11 @@ uv run --locked src/nike/sync.py --all-history --full
 
 ## Progress, recovery, and limitations
 
+- **Logs:** `--log` captures progress and sanitized errors. Log files are `0600`
+  and their directory is `0700` on POSIX systems. Known tokens are redacted from
+  captured output, and upstream HTTP debug logging is disabled. Logs may contain
+  activity IDs and local paths, so keep them private. No log is committed or
+  pushed by the fetcher.
 - **First-fetch cost:** the pinned library lists IDs without dates. Uncached
   details, including older runs, must be fetched before local date selection.
   They remain in the ignored cache at
@@ -135,15 +143,45 @@ are accepted. Simultaneous Nike imports into the same checkout are blocked.
 
 The upstream library is pinned to revision
 [`a4447c8c65b3f0d404f8f1441fded35e83871405`](https://github.com/yasoob/nrc-exporter/commit/a4447c8c65b3f0d404f8f1441fded35e83871405).
-The adjacent `sync.py.lock` pins its dependencies. Login and protocol fixes belong
-upstream. The published PyPI version predates the required fixes.
+The adjacent `sync.py.lock` pins its dependencies. Local uv overrides select
+patched Requests and Selenium releases despite the upstream package's older
+bounds; filelock also has a patched lower bound. The manual login path is tested
+with those versions. Automated Selenium login is not used by this launcher.
+Login and protocol fixes belong upstream. The published PyPI version predates
+the required fixes.
+
+### Security review, 2026-11-02
+
+The pre-fetch review covered credential entry and persistence, terminal and file
+logs, filesystem paths, Git exclusions, the library calls used by this launcher,
+and the locked dependencies. It found and fixed two issues:
+
+- The library's manual token prompt used echoed input. The local input bridge now
+  uses Python's [hidden input](https://docs.python.org/3/library/getpass.html) and
+  refuses its echoed fallback. The library still controls the login flow.
+- The original lock contained dependencies with published advisories. The lock
+  now selects patched versions, including fixes for
+  [Requests credential leakage](https://github.com/psf/requests/security/advisories/GHSA-9hjg-9r4m-mvj7)
+  and [filelock lock-file handling](https://github.com/tox-dev/filelock/security/advisories/GHSA-69hj-f68j-2879).
+
+`pip-audit` reported no known vulnerabilities in the **23 registry packages** in
+the updated lock. The pinned Git library was reviewed separately; it is outside
+that registry scan. This is a point-in-time result. The 21 offline tests include
+the actual pinned library's manual login path with synthetic input, hidden-input
+failure, token redaction, log permissions, and incremental recovery.
+
+The fetch path invokes the library's read operations over HTTPS. Its bearer token
+is supplied by Nike's login session; the launcher cannot request a narrower OAuth
+scope or guarantee that the token itself permits only reads. Treat it as a
+credential for your Nike account. The data checkout and local machine remain
+trusted storage; Git ignores and file permissions do not encrypt the files.
 
 To run the offline checks, first populate the locked script environment, then run
 the tests. Fixtures contain synthetic tokens and block Nike HTTP calls:
 
 ```sh
 uv run --locked src/nike/sync.py --help
-uv run --with filelock python -m unittest discover -s tests/nike -v
+uv run --with 'filelock>=4.2.1,<5' python -m unittest discover -s tests/nike -v
 ```
 
 Tests cover the real pinned library through mocked HTTP, incremental imports,

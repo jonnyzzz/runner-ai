@@ -3,15 +3,19 @@
 # requires-python = ">=3.11,<3.12"
 # dependencies = [
 #   "nrc-exporter @ git+https://github.com/yasoob/nrc-exporter.git@a4447c8c65b3f0d404f8f1441fded35e83871405",
-#   "filelock>=3.16,<4",
+#   "filelock>=4.2.1,<5",
 # ]
+# [tool.uv]
+# override-dependencies = ["requests>=2.33.0,<3", "selenium>=4.14,<5"]
 # ///
 """Fetch Nike runs through nrc-exporter; own only local persistence and selection."""
 
 from __future__ import annotations
 
 import argparse
+import builtins
 import contextlib
+import getpass
 import io
 import json
 import logging
@@ -23,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import warnings
 from datetime import UTC, date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -32,6 +37,7 @@ ROOT = Path(__file__).resolve().parents[2]
 IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
 FOLDER = re.compile(r"run-\d{4}-\d{2}-\d{2}-nike-(.+)\Z")
 IGNORE = ("/strava-tokens.json", "/nike-tokens.json", "/strava-mcp/", "/.sync-state/")
+SECRETS: set[str] = set()
 
 
 class SyncError(Exception):
@@ -40,6 +46,96 @@ class SyncError(Exception):
 
 class Excluded(Exception):
     pass
+
+
+class SafeOutput:
+    """Capture complete output lines, removing credentials before either sink."""
+
+    def __init__(self, console, log):
+        self.console, self.log = console, log
+        self.pending = ""
+
+    def emit(self, text):
+        for secret in sorted(SECRETS, key=len, reverse=True):
+            text = text.replace(secret, "[REDACTED]")
+        self.console.write(text)
+        self.log.write(text)
+
+    def write(self, text):
+        self.pending += text
+        while "\n" in self.pending:
+            line, self.pending = self.pending.split("\n", 1)
+            self.emit(line + "\n")
+        return len(text)
+
+    def flush(self):
+        if self.pending:
+            self.emit(self.pending)
+            self.pending = ""
+        self.console.flush()
+        self.log.flush()
+
+    def isatty(self):
+        return self.console.isatty()
+
+
+@contextlib.contextmanager
+def private_log(state_root: Path, root: Path, enabled: bool):
+    if not enabled:
+        yield None
+        return
+    directory = state_root / "logs"
+    private_directory(directory, root)
+    prefix = f"fetch-{datetime.now(UTC):%Y%m%dT%H%M%SZ}-"
+    fd, filename = tempfile.mkstemp(prefix=prefix, suffix=".log", dir=directory)
+    with os.fdopen(fd, "w", encoding="utf-8") as log:
+        out, err = SafeOutput(sys.stdout, log), SafeOutput(sys.stderr, log)
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            print(f"Log file: {filename}", flush=True)
+            try:
+                yield Path(filename)
+            except SyncError as error:
+                message = str(error)
+                for secret in SECRETS:
+                    message = message.replace(secret, "[REDACTED]")
+                log.write(f"Error: {message}\n")
+                raise
+            except (OSError, KeyboardInterrupt):
+                log.write("Run interrupted or local file/process operation failed.\n")
+                raise
+            finally:
+                out.flush()
+                err.flush()
+
+
+@contextlib.contextmanager
+def private_library_input():
+    """Keep the pinned library's confirmation, but hide its subsequent token input."""
+    original = builtins.input
+    calls = 0
+
+    def receive(prompt=""):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return original(prompt)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", getpass.GetPassWarning)
+            try:
+                token = getpass.getpass("Nike access token (hidden): ")
+            except getpass.GetPassWarning:
+                raise SyncError(
+                    "A terminal supporting hidden token input is required."
+                ) from None
+        if token:
+            SECRETS.add(token)
+        return token
+
+    builtins.input = receive
+    try:
+        yield
+    finally:
+        builtins.input = original
 
 
 def identifier(value: object) -> str:
@@ -172,6 +268,7 @@ def load_token(root: Path, account: str, login: bool, library) -> str:
             raise SyncError(
                 "Nike token file needs a nonempty access_token; run with --login."
             )
+        SECRETS.add(token)
         if not login:
             return token
     if not sys.stdin.isatty():
@@ -181,6 +278,7 @@ def load_token(root: Path, account: str, login: bool, library) -> str:
     token = library.login()
     if not isinstance(token, str) or not token.strip():
         raise SyncError("The Nike library did not return a usable token.")
+    SECRETS.add(token)
     atomic_json(path, {"account": account, "access_token": token})
     secure_token_file(path)
     return token
@@ -234,9 +332,10 @@ class NikeLibrary:
         previous = Path.cwd()
         try:
             os.chdir(self.work)
-            return nrc_exporter.get_access_token(
-                {"gecko_path": None, "manual": True, "debug": False}
-            )
+            with private_library_input():
+                return nrc_exporter.get_access_token(
+                    {"gecko_path": None, "manual": True, "debug": False}
+                )
         except (Exception, SystemExit):  # noqa: BLE001 - keep upstream credentials out of errors
             raise SyncError(
                 "Nike library login did not complete; follow its authentication instructions."
@@ -599,6 +698,11 @@ def parse_args(argv=None):
         help="Run the library's login flow again and replace the saved token",
     )
     parser.add_argument(
+        "--log",
+        action="store_true",
+        help="Write a private, redacted run log under data/.sync-state/nike/logs",
+    )
+    parser.add_argument(
         "--timeout",
         type=float,
         default=60,
@@ -622,7 +726,10 @@ def main(argv=None) -> int:
             with FileLock(state_root / "sync.lock", timeout=0, mode=0o600):
                 work = state_root / args.account
                 private_directory(work, root)
-                return sync(args, root, work, NikeLibrary(work, args.timeout))
+                with private_log(state_root, root, args.log):
+                    result = sync(args, root, work, NikeLibrary(work, args.timeout))
+                    print(f"Finished with exit status {result}.", flush=True)
+                    return result
         except Timeout:
             raise SyncError(
                 "Another Nike sync is already using this data checkout."

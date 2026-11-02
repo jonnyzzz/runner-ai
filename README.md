@@ -17,12 +17,12 @@ With a separate Git checkout prepared under `data/`, start the Nike library's
 login flow and fetch runs:
 
 ```sh
-uv run --locked src/nike/sync.py --login --timezone Europe/Berlin
+uv run --locked src/nike/sync.py --login --timezone Europe/Berlin --log
 ```
 
 Choose the timezone appropriate for your training history. See
 [Nike setup and usage](nike.md#first-fetch) for prerequisites, authentication,
-incremental imports, and limitations.
+incremental imports, private logs, and limitations.
 
 ## Planned workflow
 

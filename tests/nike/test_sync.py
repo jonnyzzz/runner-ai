@@ -1,5 +1,6 @@
 """Offline integration checks. All tokens and activities here are synthetic."""
 
+import builtins
 import importlib.util
 import io
 import json
@@ -335,8 +336,19 @@ def offline_get(url, headers):
         return Response(json.loads((fixture / "records.json").read_text())["gps-free"])
     raise AssertionError("Unexpected HTTP request; live network is disabled in this test")
 requests.get = offline_get
+if os.environ.get("NIKE_TEST_LOGIN"):
+    import builtins, getpass, sys, webbrowser
+    builtins.input = lambda prompt="": "y"
+    getpass.getpass = lambda prompt="": "synthetic-private-token"
+    sys.stdin.isatty = lambda: True
+    webbrowser.open_new_tab = lambda url: None
 """)
-        env = dict(os.environ, PYTHONPATH=str(shim), NIKE_TEST_FIXTURE=str(shim))
+        env = dict(
+            os.environ,
+            PYTHONPATH=str(shim),
+            NIKE_TEST_FIXTURE=str(shim),
+            NIKE_TEST_LOGIN="1",
+        )
         command = [
             "uv",
             "run",
@@ -349,12 +361,17 @@ requests.get = offline_get
             "2025-11-02",
             "--timezone",
             "Europe/Berlin",
+            "--log",
+            "--login",
         ]
         result = subprocess.run(
             command, env=env, text=True, capture_output=True, timeout=30, check=False
         )
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertNotIn(TOKEN, result.stdout + result.stderr)
+        log = next((self.state_root / "logs").glob("*.log"))
+        self.assertNotIn(TOKEN, log.read_text())
+        self.assertEqual(0o600, stat.S_IMODE(log.stat().st_mode))
         self.assertEqual(
             fixtures["gps-free"],
             nike.read_json(self.root / "run-2026-10-15-nike-gps-free" / "nike.json"),
@@ -362,6 +379,7 @@ requests.get = offline_get
         self.assertFalse(any(self.root.glob("run-*-nike-upstream-manual")))
         self.assertEqual(2, len(calls.read_text().splitlines()))
         calls.unlink()
+        command.remove("--login")
         result = subprocess.run(
             command, env=env, text=True, capture_output=True, timeout=30, check=False
         )
@@ -370,6 +388,38 @@ requests.get = offline_get
 
 
 class LibraryBoundaryTests(unittest.TestCase):
+    def test_library_token_input_is_hidden_and_cannot_fall_back_to_echo(self):
+        with (
+            patch.object(builtins, "input", return_value="y") as confirmation,
+            patch.object(nike.getpass, "getpass", return_value=TOKEN) as secret,
+        ):
+            with nike.private_library_input():
+                self.assertEqual("y", input())
+                self.assertEqual(TOKEN, input())
+            self.assertEqual(1, confirmation.call_count)
+            self.assertEqual(1, secret.call_count)
+            self.assertEqual("y", input())
+        with (
+            patch.object(builtins, "input", return_value="y"),
+            patch.object(
+                nike.getpass, "getpass", side_effect=nike.getpass.GetPassWarning()
+            ),
+            nike.private_library_input(),
+        ):
+            input()
+            with self.assertRaises(nike.SyncError):
+                input()
+
+    def test_log_redacts_split_token_output_before_console_and_file(self):
+        console, log = io.StringIO(), io.StringIO()
+        with patch.object(nike, "SECRETS", {TOKEN}):
+            output = nike.SafeOutput(console, log)
+            output.write("Credential: " + TOKEN[:8])
+            output.write(TOKEN[8:] + "\n")
+            output.flush()
+        self.assertNotIn(TOKEN, console.getvalue() + log.getvalue())
+        self.assertIn("[REDACTED]", log.getvalue())
+
     def test_worker_uses_upstream_functions_and_suppresses_output(self):
         def details(activity_id, options):
             self.assertEqual("first", activity_id)
