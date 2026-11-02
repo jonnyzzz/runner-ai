@@ -53,14 +53,28 @@ uv run src/strava/sync.py
 uv run src/strava/sync.py --full
 ```
 
-The user must register a [Strava API application](https://www.strava.com/settings/api)
-and supply `STRAVA_CLIENT_ID` and `STRAVA_CLIENT_SECRET` through the environment.
+The user must register a [Strava API application](https://www.strava.com/settings/api).
+Follow the [Strava Getting Started guide](https://developers.strava.com/docs/getting-started/)
+to create an app and obtain credentials. **A Strava subscription is required**
+to access certain activity data (including private "Only You" runs). 
+
+Supply `STRAVA_CLIENT_ID` and `STRAVA_CLIENT_SECRET` through the environment.
 Resolve the default `data/` path relative to the repository root, regardless of
 the shell's working directory. This milestone imports source files; private
 repository provisioning and automatic Git commits or pushes are separate work.
 
 ### OAuth login and credentials
 
+- **Create tokens:** Register an app at
+  [Strava API Settings](https://www.strava.com/settings/api), set the
+  Authorization Callback Domain/redirect to a loopback URL (or follow the
+  [Getting Started](https://developers.strava.com/docs/getting-started/) flow).
+  Complete the OAuth authorization to obtain access and refresh tokens. **A
+  Strava subscription is necessary** to access private activities (including
+  "Only You" runs).
+- **Alternative: Strava MCP.** You can also connect via a Strava MCP server
+  instead of running the custom importer. This approach also requires a Strava
+  subscription for access to private runs.
 - Start a loopback-only HTTP listener before opening the browser. Let the OS
   assign a free port by binding port `0`, and use
   `http://localhost:<assigned-port>/callback` as the redirect URI.
@@ -76,10 +90,13 @@ repository provisioning and automatic Git commits or pushes are separate work.
 - Exchange the code for tokens and verify the granted scope. Reuse valid tokens
   on later runs, refresh expired access tokens, and atomically save the latest
   returned refresh token. Reauthorize when access has been revoked.
-- Keep tokens in a user-local state directory outside both Git repositories,
-  with access restricted to the current user. Never write client secrets, codes,
-  or tokens into activity JSON, `data/`, `slop/`, or logs. Bind saved credentials
-  and sync state to the authenticated athlete to avoid mixing accounts.
+- **Store tokens under `data/`:** Save tokens in a file under the `data/`
+  directory (e.g., `data/strava-tokens.json`). The `data/` directory is in a
+  separate private Git repository and is ignored by this repository. Restrict
+  file permissions to the current user (e.g., `0600`). Never write client
+  secrets, codes, or tokens into activity JSON, `slop/`, logs, or commit them to
+  Git. Bind saved credentials and sync state to the authenticated athlete to
+  avoid mixing accounts.
 
 The redirect rules, scopes, and token lifecycle follow
 [Strava's authentication documentation](https://developers.strava.com/docs/authentication/).
