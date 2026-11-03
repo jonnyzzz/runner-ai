@@ -174,6 +174,18 @@ class SyncTests(unittest.TestCase):
         self.assertIn("older", nike.existing_folders(self.root))
         self.assertEqual([], library.fetched)
 
+    def test_progress_includes_activities_outside_selected_history(self):
+        library = FakeLibrary(
+            {
+                f"old{i}": run_record(f"old{i}", "2020-01-01T12:00:00+00:00")
+                for i in range(25)
+            }
+        )
+        self.assertEqual(0, self.run_sync(library))
+        self.assertIn("Processed 25/25 listed runs.", self.stdout.getvalue())
+        self.assertEqual(25, len(library.fetched))
+        self.assertEqual({}, nike.existing_folders(self.root))
+
     def test_local_date_and_exact_utc_cutoff(self):
         library = FakeLibrary(
             {

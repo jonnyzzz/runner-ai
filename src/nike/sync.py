@@ -661,8 +661,9 @@ def sync(args, root: Path, work: Path, library, now: datetime | None = None) -> 
                     flush=True,
                 )
                 break
-        if number % 25 == 0:
-            print(f"Processed {number}/{len(ids)} listed runs.", flush=True)
+        finally:
+            if number % 25 == 0:
+                print(f"Processed {number}/{len(ids)} listed runs.", flush=True)
     state["pending_ids"] = failed
     state["possible_duplicates"] = possible_duplicates(root, selected_records)
     state["complete"] = not failed
