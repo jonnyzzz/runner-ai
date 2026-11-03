@@ -48,6 +48,23 @@ class Excluded(Exception):
     pass
 
 
+def normalize_token(value: object) -> str:
+    """Accept a copied Authorization header value without duplicating its scheme."""
+    if not isinstance(value, str):
+        raise SyncError("Nike token must be nonempty text; renew it with --login.")
+    token = re.sub(r"^Bearer[ \t]+", "", value.strip(), count=1, flags=re.IGNORECASE)
+    if (
+        not token
+        or token.lower() == "bearer"
+        or any(ord(char) < 33 or ord(char) > 126 for char in token)
+    ):
+        raise SyncError(
+            "Paste only the Nike access token or Bearer token value, then press Enter."
+        )
+    SECRETS.update((value, token))
+    return token
+
+
 class SafeOutput:
     """Capture complete output lines, removing credentials before either sink."""
 
@@ -119,6 +136,12 @@ def private_library_input():
         calls += 1
         if calls == 1:
             return original(prompt)
+        print(
+            "Paste the access token (with or without 'Bearer '), then press Enter.\n"
+            "Nothing will appear while you paste; this is expected.",
+            file=sys.stderr,
+            flush=True,
+        )
         with warnings.catch_warnings():
             warnings.simplefilter("error", getpass.GetPassWarning)
             try:
@@ -127,9 +150,7 @@ def private_library_input():
                 raise SyncError(
                     "A terminal supporting hidden token input is required."
                 ) from None
-        if token:
-            SECRETS.add(token)
-        return token
+        return normalize_token(token)
 
     builtins.input = receive
     try:
@@ -263,22 +284,17 @@ def load_token(root: Path, account: str, login: bool, library) -> str:
         saved = read_json(path)
         if saved.get("account") != account:
             raise SyncError("Nike token file belongs to a different account label.")
-        token = saved.get("access_token")
-        if not isinstance(token, str) or not token.strip():
-            raise SyncError(
-                "Nike token file needs a nonempty access_token; run with --login."
-            )
-        SECRETS.add(token)
+        token = normalize_token(saved.get("access_token"))
         if not login:
+            if token != saved["access_token"]:
+                saved["access_token"] = token
+                atomic_json(path, saved)
             return token
     if not sys.stdin.isatty():
         raise SyncError(
             "Nike login needs an interactive terminal. Run this command with --login."
         )
-    token = library.login()
-    if not isinstance(token, str) or not token.strip():
-        raise SyncError("The Nike library did not return a usable token.")
-    SECRETS.add(token)
+    token = normalize_token(library.login())
     atomic_json(path, {"account": account, "access_token": token})
     secure_token_file(path)
     return token
@@ -336,6 +352,8 @@ class NikeLibrary:
                 return nrc_exporter.get_access_token(
                     {"gecko_path": None, "manual": True, "debug": False}
                 )
+        except SyncError:
+            raise
         except (Exception, SystemExit):  # noqa: BLE001 - keep upstream credentials out of errors
             raise SyncError(
                 "Nike library login did not complete; follow its authentication instructions."

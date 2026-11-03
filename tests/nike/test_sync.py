@@ -269,6 +269,17 @@ class SyncTests(unittest.TestCase):
         with self.assertRaises(nike.SyncError):
             nike.prepare_data(self.root)
 
+    def test_saved_bearer_value_is_normalized_before_use_and_persisted(self):
+        path = self.root / "nike-tokens.json"
+        nike.atomic_json(
+            path, {"account": "athlete", "access_token": "Bearer " + TOKEN}
+        )
+        self.assertEqual(
+            TOKEN, nike.load_token(self.root, "athlete", False, FakeLibrary({}))
+        )
+        self.assertEqual(TOKEN, nike.read_json(path)["access_token"])
+        self.assertEqual(0o600, stat.S_IMODE(path.stat().st_mode))
+
     def test_parent_repository_is_not_accepted_as_private_checkout(self):
         child = self.root / "not-a-checkout"
         child.mkdir()
@@ -388,6 +399,13 @@ if os.environ.get("NIKE_TEST_LOGIN"):
 
 
 class LibraryBoundaryTests(unittest.TestCase):
+    def test_token_input_accepts_header_prefix_and_rejects_invalid_values(self):
+        for value in (TOKEN, "Bearer " + TOKEN, "  bEaReR\t" + TOKEN + "\n"):
+            self.assertEqual(TOKEN, nike.normalize_token(value))
+        for value in (None, "", "Bearer ", "Bearer", "Bearer a\r\nb", "a b", "a\x00b"):
+            with self.subTest(value=value), self.assertRaises(nike.SyncError):
+                nike.normalize_token(value)
+
     def test_library_token_input_is_hidden_and_cannot_fall_back_to_echo(self):
         with (
             patch.object(builtins, "input", return_value="y") as confirmation,

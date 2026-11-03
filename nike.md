@@ -31,14 +31,26 @@ Choose an IANA timezone appropriate for your history. The source timezone is use
 when present; otherwise this explicit fallback determines the folder date.
 Historical runs recorded while traveling may need a different timezone.
 
-The launcher invokes the library's manual login flow. Follow its terminal prompts
-to open Nike's website and supply the token as described in the
-[library's authentication instructions](https://github.com/yasoob/nrc-exporter#heavy_dollar_sign-extracting-access-tokens).
-Enter the token at the **hidden terminal prompt**; do not paste it into chat or a
-shell command. Login stops if the terminal cannot hide input. The launcher saves
-the returned token in **`data/nike-tokens.json`** with the local
-account label. It does not pass the token in process arguments or write it into
-run records. No Strava credentials are needed.
+The launcher invokes the library's manual login flow:
+
+1. Run the command above in an interactive terminal. When the library says
+   `Press 'y' to open up the login url`, type `y` and press **Enter**.
+2. Sign in on Nike's website in the browser that opens. Follow the
+   [library's token extraction instructions](https://github.com/yasoob/nrc-exporter#heavy_dollar_sign-extracting-access-tokens)
+   to find the `access_token` in browser developer tools. You can also copy the
+   value of an authenticated Nike request's `Authorization` header.
+3. Switch back to the terminal. At `Nike access token (hidden):`, paste the token
+   and press **Enter**. Both the token alone and `Bearer <token>` are accepted.
+   **The terminal displays no characters or asterisks when you paste.** This is
+   expected; press Enter once after pasting to submit it.
+4. The fetch starts with `Listing runs through nrc-exporter...`. Its log filename
+   is printed at startup; periodic counts show progress after listing completes.
+
+Keep the token out of chat and shell commands. Login stops if the terminal cannot
+hide input. The launcher removes a copied `Bearer ` prefix and saves the token
+in **`data/nike-tokens.json`** with the local account label. It also corrects that
+prefix in previously saved token files. It does not pass the token in process
+arguments or write it into run records. No Strava credentials are needed.
 
 Before storing credentials, the script adds the
 [required exclusions](README.md#credential-files-under-data) to `data/.gitignore`,
@@ -166,9 +178,11 @@ and the locked dependencies. It found and fixed two issues:
 
 `pip-audit` reported no known vulnerabilities in the **23 registry packages** in
 the updated lock. The pinned Git library was reviewed separately; it is outside
-that registry scan. This is a point-in-time result. The 21 offline tests include
+that registry scan. This is a point-in-time result. The offline tests include
 the actual pinned library's manual login path with synthetic input, hidden-input
-failure, token redaction, log permissions, and incremental recovery.
+failure, token redaction, log permissions, and incremental recovery. Additional
+checks cover copied `Bearer ` prefixes and reject embedded whitespace or control
+characters before a token reaches the library.
 
 The fetch path invokes the library's read operations over HTTPS. Its bearer token
 is supplied by Nike's login session; the launcher cannot request a narrower OAuth
