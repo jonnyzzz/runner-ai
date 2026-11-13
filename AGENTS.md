@@ -10,7 +10,8 @@
 3. Look for additional `AGENTS.md` files and athlete notes inside `data/` before
    analysing that checkout. Distinguish explicit athlete input from agent output.
    In particular, read `data/ATHLETE-NOTES.md` when present: it records reported
-   symptoms, recovery and fuelling without turning them into diagnoses.
+   symptoms, recovery and fuelling without turning them into diagnoses. Read
+   each analysed activity's optional `comments.md` for session-specific context.
 4. Inspect both repositories with `git status --short` and
    `git -C data status --short`. `data/` is a separate private Git checkout and is
    ignored by this parent repository. Ordinary `rg --files` skips it.
@@ -20,6 +21,12 @@
 - `data/run-YYYY-MM-DD-<provider>-<activity-id>/`: retained activity records.
 - `nike.json`: original Nike activity details; `import.json`: provider, activity
   ID, library revision, and the source or fallback timezone used for dating.
+- `data/run-*/comments.md`: optional athlete comments for that single activity,
+  including sensations, recovery, fuelling, sleep, alcohol, route changes and
+  recording failures. Preserve the athlete's wording and uncertainty, and record
+  when and where the information was provided. Explicitly label unanswered
+  questions; a missing comment or answer does not establish absence of symptoms,
+  stops or other context. Keep shared context in `data/ATHLETE-NOTES.md`.
 - `data/GOALS.md` and athlete-written notes: goals, constraints, race history,
   recovery, pain, and missing records. These take precedence over old advice.
 - `data/.sync-state/nike/<account>/state.json`: non-secret import metadata,
@@ -88,6 +95,14 @@ streams of one metric: do not sum those together.
    count once. Cross-provider matches require checking start, distance and time.
    Keep distinct same-day sessions distinct. Flag tiny/accidental recordings
    and quantify their effect; never silently delete or merge source records.
+   Review newly imported activities individually and ask session-specific
+   questions about consequential gaps in `comments.md`, using the actual
+   record and existing answers. Save athlete answers under the matching activity;
+   do not invent answers or infer the session type from the day of the week.
+   If a recording stopped early, distinguish the recorded distance from any
+   reconstructed total. Keep reproducible estimates, methods and uncertainty in
+   `slop/`; never overwrite source distance, duration, GPS or provenance with an
+   estimate. Ask for the missing route when the evidence cannot establish it.
 3. Prioritize the most recent 8–12 weeks; use the wider year for continuity and
    earlier long runs. Report weekly run count, distance, duration and longest
    single run. Distinguish calendar months, complete Monday–Sunday weeks and

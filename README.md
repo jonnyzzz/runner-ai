@@ -116,6 +116,24 @@ data/run-YYYY-MM-DD-<provider>-<activity-id>/
   Report potential matches using source links, UTC start, duration, and distance;
   resolve duplicates before counting them in training totals.
 
+### Per-activity comments
+
+Each activity folder may contain an optional **`comments.md`** file. Use it to
+record the athlete's own context for that session: how the run felt, symptoms,
+recovery, food and drink, sleep, alcohol, conditions, route changes, equipment,
+or a recording that stopped early. Record the date and source of the athlete's
+statement, preserve uncertainty, and distinguish athlete input from unanswered
+questions. No comment does not mean no symptoms or no relevant context.
+
+Review newly imported activities individually and ask questions grounded in each
+record and the athlete's existing answers. Add answers to that activity's
+`comments.md`; keep context that applies across sessions in `ATHLETE-NOTES.md`.
+Imports and refreshes must preserve these files. A comment supplements provider
+data and never silently changes it. Save reconstructed distances, calculations,
+coaching advice and other agent interpretations in the ignored `slop/` directory,
+with the method, assumptions and uncertainty stated separately from recorded
+values.
+
 ### Credential files under data
 
 Store tokens in selected files **inside the private `data/` checkout**. Each
@@ -198,7 +216,8 @@ runner-ai/
 │   ├── .sync-state/             # Per-integration operational state; untracked
 │   └── run-YYYY-MM-DD-<provider>-<id>/
 │       ├── <source-file>.json   # Source representation; see provider spec
-│       └── import.json         # Factual source/date provenance
+│       ├── import.json         # Factual source/date provenance
+│       └── comments.md         # Optional athlete context and open questions
 └── slop/                        # Temporary agent output; ignored here
 ```
 

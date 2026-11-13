@@ -68,6 +68,12 @@ data/run-YYYY-MM-DD-nike-<activity-id>/
 └── import.json     # Library revision, source ID, account label, and date basis
 ```
 
+An activity may also have a `comments.md` file for athlete-provided context and
+explicitly unanswered questions, following the
+[per-activity comments contract](README.md#per-activity-comments). Repeated imports
+and full refreshes preserve it. Keep distance estimates for incomplete recordings
+and other agent interpretations in `slop/`, separate from the source JSON.
+
 ## Subsequent fetches and token renewal
 
 ```sh
